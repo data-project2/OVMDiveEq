@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 @main struct OVMDiveEqApp: App {
@@ -5,5 +6,6 @@ import SwiftUI
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: Cylinder.self)
     }
 }
