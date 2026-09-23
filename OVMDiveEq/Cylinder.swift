@@ -82,6 +82,82 @@ enum MaintenanceStatus: Int, CaseIterable, Codable {
     }
 }
 
+struct CylinderDraft: Equatable {
+    var name = ""
+    var brand = ""
+    var material: CylinderMaterial = .steel
+    var volumeLitersText = ""
+    var colorName = ""
+    var photoData: Data?
+    var vipDate: Date?
+    var nextVIPDueDate: Date?
+    var hydroDate: Date?
+    var nextHydroDueDate: Date?
+    var notes = ""
+
+    init() {
+    }
+
+    init(cylinder: Cylinder?) {
+        name = cylinder?.name ?? ""
+        brand = cylinder?.brand ?? ""
+        material = cylinder?.material ?? .steel
+        volumeLitersText = cylinder?.volumeLiters.map { String($0) } ?? ""
+        colorName = cylinder?.colorName ?? ""
+        photoData = cylinder?.photoData
+        vipDate = cylinder?.vipDate
+        nextVIPDueDate = cylinder?.nextVIPDueDate
+        hydroDate = cylinder?.hydroDate
+        nextHydroDueDate = cylinder?.nextHydroDueDate
+        notes = cylinder?.notes ?? ""
+    }
+
+    var isValid: Bool {
+        normalizedName.isEmpty == false
+    }
+
+    var normalizedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedBrand: String {
+        brand.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedColorName: String {
+        colorName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedNotes: String {
+        notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedVolumeLiters: Double? {
+        Double(volumeLitersText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func apply(to cylinder: Cylinder) {
+        cylinder.name = normalizedName
+        cylinder.brand = normalizedBrand
+        cylinder.material = material
+        cylinder.volumeLiters = normalizedVolumeLiters
+        cylinder.colorName = normalizedColorName
+        cylinder.photoData = photoData
+        cylinder.vipDate = vipDate
+        cylinder.nextVIPDueDate = nextVIPDueDate
+        cylinder.hydroDate = hydroDate
+        cylinder.nextHydroDueDate = nextHydroDueDate
+        cylinder.notes = normalizedNotes
+        cylinder.updatedAt = .now
+    }
+
+    func makeCylinder() -> Cylinder {
+        let cylinder = Cylinder(name: normalizedName)
+        apply(to: cylinder)
+        return cylinder
+    }
+}
+
 @Model
 final class Cylinder {
     var id: UUID
@@ -90,6 +166,7 @@ final class Cylinder {
     var material: CylinderMaterial
     var volumeLiters: Double?
     var colorName: String
+    @Attribute(.externalStorage) var photoData: Data?
     var vipDate: Date?
     var nextVIPDueDate: Date?
     var hydroDate: Date?
@@ -105,6 +182,7 @@ final class Cylinder {
         material: CylinderMaterial = .steel,
         volumeLiters: Double? = nil,
         colorName: String = "",
+        photoData: Data? = nil,
         vipDate: Date? = nil,
         nextVIPDueDate: Date? = nil,
         hydroDate: Date? = nil,
@@ -119,6 +197,7 @@ final class Cylinder {
         self.material = material
         self.volumeLiters = volumeLiters
         self.colorName = colorName
+        self.photoData = photoData
         self.vipDate = vipDate
         self.nextVIPDueDate = nextVIPDueDate
         self.hydroDate = hydroDate
@@ -129,6 +208,13 @@ final class Cylinder {
     }
 
     var subtitle: String {
+        [brand.ifEmpty(replacingWith: ""), volumeDisplayValue, material.displayName, colorDisplayValue]
+            .filter { $0.isEmpty == false && $0 != "Not Set" }
+            .joined(separator: " • ")
+            .ifEmpty(replacingWith: material.displayName)
+    }
+
+    var inventorySummaryLine: String {
         [brand.ifEmpty(replacingWith: ""), volumeDisplayValue, material.displayName, colorDisplayValue]
             .filter { $0.isEmpty == false && $0 != "Not Set" }
             .joined(separator: " • ")
@@ -159,6 +245,10 @@ final class Cylinder {
     var colorDisplayValue: String {
         colorName.ifEmpty(replacingWith: "Not Set")
     }
+
+    var draft: CylinderDraft {
+        CylinderDraft(cylinder: self)
+    }
 }
 
 struct CylinderMaintenanceSnapshot: Identifiable {
@@ -178,12 +268,12 @@ struct CylinderMaintenanceSnapshot: Identifiable {
 }
 
 struct CylinderMaintenanceEvaluator {
-    static let warningWindowDays = 30
+    nonisolated static let defaultWarningWindowDays = 30
 
     nonisolated static func status(
         for dueDate: Date?,
         today: Date = .now,
-        warningWindowDays: Int = 30,
+        warningWindowDays: Int = defaultWarningWindowDays,
         calendar: Calendar = .current
     ) -> MaintenanceStatus {
         guard let dueDate else {
@@ -205,41 +295,70 @@ struct CylinderMaintenanceEvaluator {
         return .ok
     }
 
-    nonisolated static func overallStatus(for cylinder: Cylinder) -> MaintenanceStatus {
-        snapshots(for: cylinder)
+    nonisolated static func overallStatus(
+        for cylinder: Cylinder,
+        warningWindowDays: Int = defaultWarningWindowDays
+    ) -> MaintenanceStatus {
+        snapshots(for: cylinder, warningWindowDays: warningWindowDays)
             .map(\.status)
             .max(by: { $0.priority < $1.priority }) ?? .unknown
     }
 
-    nonisolated static func snapshots(for cylinder: Cylinder) -> [CylinderMaintenanceSnapshot] {
+    nonisolated static func snapshots(
+        for cylinder: Cylinder,
+        warningWindowDays: Int = defaultWarningWindowDays
+    ) -> [CylinderMaintenanceSnapshot] {
         [
             CylinderMaintenanceSnapshot(
                 cylinderID: cylinder.id,
                 cylinderName: cylinder.name,
                 title: "VIP",
                 dueDate: cylinder.nextVIPDueDate,
-                status: status(for: cylinder.nextVIPDueDate)
+                status: status(for: cylinder.nextVIPDueDate, warningWindowDays: warningWindowDays)
             ),
             CylinderMaintenanceSnapshot(
                 cylinderID: cylinder.id,
                 cylinderName: cylinder.name,
                 title: "Hydro",
                 dueDate: cylinder.nextHydroDueDate,
-                status: status(for: cylinder.nextHydroDueDate)
+                status: status(for: cylinder.nextHydroDueDate, warningWindowDays: warningWindowDays)
             )
         ]
     }
 
-    nonisolated static func description(for dueDate: Date?) -> String {
-        detailText(for: dueDate, label: "")
+    nonisolated static func equipmentSnapshots(
+        for cylinder: Cylinder,
+        warningWindowDays: Int = defaultWarningWindowDays
+    ) -> [EquipmentMaintenanceSnapshot] {
+        snapshots(for: cylinder, warningWindowDays: warningWindowDays).map {
+            EquipmentMaintenanceSnapshot(
+                equipmentID: $0.cylinderID,
+                equipmentName: $0.cylinderName,
+                equipmentKind: .cylinder,
+                title: $0.title,
+                dueDate: $0.dueDate,
+                status: $0.status
+            )
+        }
+    }
+
+    nonisolated static func description(
+        for dueDate: Date?,
+        warningWindowDays: Int = defaultWarningWindowDays
+    ) -> String {
+        detailText(for: dueDate, label: "", warningWindowDays: warningWindowDays)
             .replacingOccurrences(of: " due ", with: " ")
             .replacingOccurrences(of: " approaching on ", with: " ")
     }
 
-    nonisolated static func detailText(for dueDate: Date?, label: String) -> String {
+    nonisolated static func detailText(
+        for dueDate: Date?,
+        label: String,
+        warningWindowDays: Int = defaultWarningWindowDays
+    ) -> String {
         let prefix = label.isEmpty ? "" : "\(label) "
 
-        switch status(for: dueDate) {
+        switch status(for: dueDate, warningWindowDays: warningWindowDays) {
         case .unknown:
             return "\(prefix)date not set"
         case .due:
@@ -271,9 +390,9 @@ struct CylinderMaintenanceGroups {
     let current: [CylinderMaintenanceSnapshot]
     let unknown: [CylinderMaintenanceSnapshot]
 
-    init(cylinders: [Cylinder]) {
+    init(cylinders: [Cylinder], warningWindowDays: Int) {
         let allEvents = cylinders
-            .flatMap(CylinderMaintenanceEvaluator.snapshots(for:))
+            .flatMap { CylinderMaintenanceEvaluator.snapshots(for: $0, warningWindowDays: warningWindowDays) }
             .sorted(by: CylinderMaintenanceGroups.sort)
 
         self.needsAttention = allEvents.filter { $0.status == .due || $0.status == .approaching }

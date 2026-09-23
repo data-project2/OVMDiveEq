@@ -2,32 +2,35 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
+import VisionKit
 
-struct CylinderEditorView: View {
+struct RegulatorEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    private let cylinder: Cylinder?
-    private let externalDraft: Binding<CylinderDraft>?
+    private let regulator: Regulator?
+    private let externalDraft: Binding<RegulatorDraft>?
     private let onClose: (() -> Void)?
     private let showsActionButtons: Bool
 
-    @State private var draft: CylinderDraft
+    @State private var draft: RegulatorDraft
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isPresentingCamera = false
     @State private var isShowingCameraUnavailableAlert = false
+    @State private var isPresentingSerialScanner = false
+    @State private var serialScannerUnavailableMessage: String?
 
     init(
-        cylinder: Cylinder? = nil,
-        draft: Binding<CylinderDraft>? = nil,
+        regulator: Regulator? = nil,
+        draft: Binding<RegulatorDraft>? = nil,
         showsActionButtons: Bool = true,
         onClose: (() -> Void)? = nil
     ) {
-        self.cylinder = cylinder
+        self.regulator = regulator
         self.externalDraft = draft
         self.showsActionButtons = showsActionButtons
         self.onClose = onClose
-        _draft = State(initialValue: draft?.wrappedValue ?? CylinderDraft(cylinder: cylinder))
+        _draft = State(initialValue: draft?.wrappedValue ?? RegulatorDraft(regulator: regulator))
     }
 
     var body: some View {
@@ -40,17 +43,7 @@ struct CylinderEditorView: View {
                     editorHeader
                     photoSection
                     identitySection
-                    maintenanceSection(
-                        title: "Hydro",
-                        testDate: binding(\.hydroDate),
-                        dueDate: binding(\.nextHydroDueDate)
-                    )
-                    maintenanceSection(
-                        title: "VIP",
-                        testDate: binding(\.vipDate),
-                        dueDate: binding(\.nextVIPDueDate)
-                    )
-                    notesSection
+                    maintenanceSection
                     if showsActionButtons {
                         editorActions
                     }
@@ -89,11 +82,25 @@ struct CylinderEditorView: View {
             }
             .ignoresSafeArea()
         }
+        .fullScreenCover(isPresented: $isPresentingSerialScanner) {
+            SerialNumberScannerView { scannedText in
+                activeDraft.serialNumber.wrappedValue = scannedText
+                isPresentingSerialScanner = false
+            } onCancel: {
+                isPresentingSerialScanner = false
+            }
+        }
         .alert("Camera Not Available", isPresented: $isShowingCameraUnavailableAlert) {
             Button("OK", role: .cancel) {
             }
         } message: {
             Text("This device does not currently offer a camera source.")
+        }
+        .alert("Scanner Not Available", isPresented: serialScannerAlertBinding) {
+            Button("OK", role: .cancel) {
+            }
+        } message: {
+            Text(serialScannerUnavailableMessage ?? "This device cannot scan text right now.")
         }
     }
 
@@ -101,11 +108,11 @@ struct CylinderEditorView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(cylinder == nil ? "Add Tank" : "Edit Tank")
+                    Text(regulator == nil ? "Add First Stage" : "Edit First Stage")
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(OVMTheme.textPrimary)
 
-                    Text("Store the tank details you actually use before a dive: identity, material, volume, color, and maintenance dates.")
+                    Text("Store the first stage details you need before a dive: brand, type, service dates, serial, and a reference photo.")
                         .font(.subheadline)
                         .foregroundStyle(OVMTheme.textSecondary)
                 }
@@ -125,7 +132,7 @@ struct CylinderEditorView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Close tank editor")
+                .accessibilityLabel("Close first stage editor")
             }
 
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -135,23 +142,12 @@ struct CylinderEditorView: View {
                         .stroke(OVMTheme.modalHighlight, lineWidth: 1)
                 )
                 .overlay(alignment: .leading) {
-                    Text("Maintenance dates are reminders only. The app does not determine whether a tank is safe to dive.")
+                    Text("Service dates are reminders only. Always follow the first stage manufacturer and technician service requirements.")
                         .font(.subheadline)
                         .foregroundStyle(OVMTheme.modalHighlight)
                         .padding(16)
                 }
                 .frame(minHeight: 92)
-        }
-    }
-
-    private var identitySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            editorSectionTitle("Tank")
-            editorTextField(title: "Name", text: binding(\.name))
-            editorTextField(title: "Brand", text: binding(\.brand))
-            materialPicker
-            editorTextField(title: "Volume in liters", text: binding(\.volumeLitersText), keyboardType: .decimalPad)
-            editorTextField(title: "Color", text: binding(\.colorName))
         }
     }
 
@@ -161,7 +157,7 @@ struct CylinderEditorView: View {
 
             EquipmentPhotoPreview(
                 photoData: activeDraft.photoData.wrappedValue,
-                emptyTitle: "No tank photo yet",
+                emptyTitle: "No first stage photo yet",
                 emptyMessage: "Choose one from the photo library or take a new photo directly."
             )
 
@@ -171,7 +167,7 @@ struct CylinderEditorView: View {
                         activeDraft.photoData.wrappedValue == nil ? "Choose Photo" : "Replace Photo",
                         systemImage: "photo.on.rectangle"
                     )
-                        .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(EditorSecondaryButtonStyle())
 
@@ -197,45 +193,49 @@ struct CylinderEditorView: View {
         }
     }
 
-    private var materialPicker: some View {
+    private var identitySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            editorSectionTitle("First Stage")
+            editorTextField(title: "Brand", text: binding(\.brand))
+            editorTextField(title: "Type", text: binding(\.type))
+            serialNumberField
+        }
+    }
+
+    private var serialNumberField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Material")
+            Text("Serial Number")
                 .font(.caption.weight(.semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(OVMTheme.textTertiary)
 
-            Picker("Material", selection: binding(\.material)) {
-                ForEach(CylinderMaterial.allCases) { material in
-                    Text(material.displayName).tag(material)
+            HStack(spacing: 12) {
+                TextField("", text: binding(\.serialNumber))
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .foregroundStyle(OVMTheme.textPrimary)
+
+                Button {
+                    openSerialScanner()
+                } label: {
+                    Image(systemName: "viewfinder")
                 }
+                .buttonStyle(.plain)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(OVMTheme.accent)
+                .accessibilityLabel("Scan serial number")
             }
-            .pickerStyle(.segmented)
-            .tint(OVMTheme.accent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .background(editorFieldBackground)
         }
     }
 
-    private func maintenanceSection(
-        title: String,
-        testDate: Binding<Date?>,
-        dueDate: Binding<Date?>
-    ) -> some View {
+    private var maintenanceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            editorSectionTitle(LocalizedStringKey(title))
-            OptionalDateInput(title: "\(title) Date", date: testDate)
-            OptionalDateInput(title: "Next \(title) Date", date: dueDate)
-        }
-    }
-
-    private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            editorSectionTitle("Notes")
-
-            TextField("Comments", text: binding(\.notes), axis: .vertical)
-                .lineLimit(4...7)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(editorFieldBackground)
-                .foregroundStyle(OVMTheme.textPrimary)
+            editorSectionTitle("Service")
+            OptionalDateInput(title: "Service Date", date: binding(\.serviceDate))
+            OptionalDateInput(title: "Next Service Date", date: binding(\.nextServiceDate))
         }
     }
 
@@ -248,8 +248,8 @@ struct CylinderEditorView: View {
 
             Spacer(minLength: 12)
 
-            Button(cylinder == nil ? "Save Tank" : "Update Tank") {
-                saveCylinder()
+            Button(regulator == nil ? "Save First Stage" : "Update First Stage") {
+                saveRegulator()
             }
             .buttonStyle(EditorPrimaryButtonStyle())
             .disabled(activeDraft.wrappedValue.isValid == false)
@@ -293,13 +293,13 @@ struct CylinderEditorView: View {
         }
     }
 
-    private func saveCylinder() {
+    private func saveRegulator() {
         let currentDraft = activeDraft.wrappedValue
 
-        if let cylinder {
-            currentDraft.apply(to: cylinder)
+        if let regulator {
+            currentDraft.apply(to: regulator)
         } else {
-            modelContext.insert(currentDraft.makeCylinder())
+            modelContext.insert(currentDraft.makeRegulator())
         }
 
         close()
@@ -313,7 +313,7 @@ struct CylinderEditorView: View {
         }
     }
 
-    private var activeDraft: Binding<CylinderDraft> {
+    private var activeDraft: Binding<RegulatorDraft> {
         if let externalDraft {
             externalDraft
         } else {
@@ -321,7 +321,7 @@ struct CylinderEditorView: View {
         }
     }
 
-    private func binding<Value>(_ keyPath: WritableKeyPath<CylinderDraft, Value>) -> Binding<Value> {
+    private func binding<Value>(_ keyPath: WritableKeyPath<RegulatorDraft, Value>) -> Binding<Value> {
         Binding(
             get: {
                 activeDraft.wrappedValue[keyPath: keyPath]
@@ -341,6 +341,20 @@ struct CylinderEditorView: View {
         isPresentingCamera = true
     }
 
+    private func openSerialScanner() {
+        guard DataScannerViewController.isSupported else {
+            serialScannerUnavailableMessage = "This device does not support live text scanning."
+            return
+        }
+
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            serialScannerUnavailableMessage = "This device does not currently offer a camera source."
+            return
+        }
+
+        isPresentingSerialScanner = true
+    }
+
     private func loadPhoto(from item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self),
               let image = UIImage(data: data) else {
@@ -350,5 +364,16 @@ struct CylinderEditorView: View {
         await MainActor.run {
             activeDraft.photoData.wrappedValue = image.normalizedPhotoData()
         }
+    }
+
+    private var serialScannerAlertBinding: Binding<Bool> {
+        Binding(
+            get: { serialScannerUnavailableMessage != nil },
+            set: { isPresented in
+                if isPresented == false {
+                    serialScannerUnavailableMessage = nil
+                }
+            }
+        )
     }
 }

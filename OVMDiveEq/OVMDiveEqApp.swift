@@ -6,6 +6,6 @@ import SwiftUI
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: Cylinder.self)
+        .modelContainer(for: [Cylinder.self, Regulator.self])
     }
 }
